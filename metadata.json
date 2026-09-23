@@ -1,0 +1,6 @@
+{
+  "name": "Stockroom",
+  "description": "Offline-first bar and restaurant inventory, sales, and daily reconciliation tool with MWK currency formatting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
