@@ -1151,7 +1151,7 @@
       }
 
       // --- Storage Abstraction (window.storage or localStorage) ---
-      const STORAGE_KEY = 'stockroom_db_v1';
+      const STORAGE_KEY = 'stockroom_db_v2_clean';
       let writeQueue = Promise.resolve();
       let writeTimer = null;
       let pendingStateJson = null;
@@ -1238,8 +1238,40 @@
         return h + ':' + m;
       }
 
-      // --- Default Starter Dataset ---
-      function getDefaultData() {
+      // --- Clean Empty Dataset for Deployment ---
+      function getCleanEmptyData() {
+        const today = getTodayStr();
+        return {
+          _schemaVersion: 2,
+          inventory: [],
+          salesLog: [],
+          stockMoves: [],
+          issuances: [],
+          closedDays: [],
+          currentDay: {
+            date: today,
+            opening: {},
+            netAdjustment: {},
+            actual: {},
+            manualSold: {}
+          },
+          categories: ['Beer', 'Spirits', 'Wine', 'Soft Drink', 'Mixers', 'Snacks'],
+          staffList: ['Cashier', 'Bartender', 'Manager'],
+          settings: {
+            pin: '',
+            idleLock: false,
+            idleMinutes: 10,
+            repoOwner: '',
+            repoName: '',
+            syncedAt: null,
+            reconUnits: {},
+            reconActualUnits: {}
+          }
+        };
+      }
+
+      // --- Optional Starter Demo Dataset (On Demand) ---
+      function getSampleDemoData() {
         const today = getTodayStr();
         const items = [
           { id: 'item-carls-green', name: 'Carlsberg Green 330ml', category: 'Beer', baseUnit: 'bottle', sellUnit: 'bottle', conversionRate: 1, buyPrice: 1800, sellPrice: 2500, storeStock: 36, barStock: 12, stock: 48, minAlert: 12 },
@@ -1255,46 +1287,11 @@
         items.forEach(function(it) { opening[it.id] = it.stock; });
 
         return {
-          _schemaVersion: 1,
+          _schemaVersion: 2,
           inventory: items,
           salesLog: [],
           stockMoves: [],
-          issuances: [
-            {
-              id: 'iss-init-1',
-              itemId: 'item-carls-green',
-              itemName: 'Carlsberg Green 330ml',
-              category: 'Beer',
-              qty: 12,
-              unit: 'bottle',
-              fromLocation: 'Main Store',
-              toLocation: 'Main Bar',
-              issuedTo: 'Tendai',
-              issuedBy: 'Blessings',
-              date: today,
-              time: '14:00',
-              notes: 'Shift opening bar stock issue',
-              status: 'active',
-              returnedQty: 0
-            },
-            {
-              id: 'iss-init-2',
-              itemId: 'item-kuche-kuche',
-              itemName: 'Kuche Kuche 330ml',
-              category: 'Beer',
-              qty: 12,
-              unit: 'bottle',
-              fromLocation: 'Main Store',
-              toLocation: 'Main Bar',
-              issuedTo: 'Chikondi',
-              issuedBy: 'Blessings',
-              date: today,
-              time: '14:05',
-              notes: 'Shift opening bar stock issue',
-              status: 'active',
-              returnedQty: 0
-            }
-          ],
+          issuances: [],
           closedDays: [],
           currentDay: {
             date: today,
@@ -1316,6 +1313,10 @@
             reconActualUnits: {}
           }
         };
+      }
+
+      function getDefaultData() {
+        return getCleanEmptyData();
       }
 
       let appState = null;
@@ -1856,7 +1857,23 @@
         ];
 
         if (items.length === 0) {
-          html.push('<div class="card" style="text-align:center; padding:30px 16px; color:var(--muted);">No matching inventory items found.</div>');
+          if (appState.inventory.length === 0) {
+            html.push([
+              '<div class="card" style="text-align:center; padding:36px 20px;">',
+              '  <div style="font-size:2rem; margin-bottom:8px;">📦</div>',
+              '  <h3 style="font-size:1.1rem; font-weight:700; margin-bottom:6px;">Clean Inventory Slate</h3>',
+              '  <p style="font-size:0.85rem; color:var(--muted); max-width:380px; margin:0 auto 16px auto;">',
+              '    Your venue inventory is ready for fresh setup. Add your drinks and bar stock to begin, or load starter sample drinks.',
+              '  </p>',
+              '  <div style="display:flex; justify-content:center; gap:10px; flex-wrap:wrap;">',
+              '    <button type="button" class="btn btn-primary" id="btn-inv-empty-add-item" style="font-weight:700;">+ Add First Drink</button>',
+              '    <button type="button" class="btn btn-outline" id="btn-inv-empty-load-sample">Load Starter Drinks (Demo)</button>',
+              '  </div>',
+              '</div>'
+            ].join(''));
+          } else {
+            html.push('<div class="card" style="text-align:center; padding:30px 16px; color:var(--muted);">No matching inventory items found.</div>');
+          }
         } else {
           items.forEach(function(item) {
             const store = item.storeStock !== undefined ? item.storeStock : 0;
@@ -1941,6 +1958,32 @@
         if (btnAddItem) {
           btnAddItem.addEventListener('click', function() {
             openItemEditor(null);
+          });
+        }
+
+        const btnEmptyAdd = document.getElementById('btn-inv-empty-add-item');
+        if (btnEmptyAdd) {
+          btnEmptyAdd.addEventListener('click', function() {
+            openItemEditor(null);
+          });
+        }
+
+        const btnEmptyDemo = document.getElementById('btn-inv-empty-load-sample');
+        if (btnEmptyDemo) {
+          btnEmptyDemo.addEventListener('click', function() {
+            askConfirm({
+              title: 'Load Starter Sample Drinks?',
+              message: 'This will populate your catalog with sample beers, spirits, and soft drinks to try out the system.',
+              okText: 'Load Sample Drinks',
+              tone: 'neutral'
+            }).then(function(confirmed) {
+              if (confirmed) {
+                appState = getSampleDemoData();
+                schedulePersist();
+                renderInventory();
+                showToast('Sample drinks loaded!');
+              }
+            });
           });
         }
 
@@ -3126,6 +3169,21 @@
       let sellActiveCategory = 'All';
       let lastSaleLogged = null;
 
+      function selectSellItem(itemId) {
+        const item = appState.inventory.find(function(i) { return i.id === itemId; });
+        sellSelectedItemId = itemId;
+        sellCustomPrice = null;
+        sellShowCustomPrice = false;
+        sellQty = 1;
+        sellPaymentMethod = null;
+        if (item && (item.conversionRate || 1) > 1) {
+          sellUnitMode = null;
+        } else {
+          sellUnitMode = 'base';
+        }
+        renderSell();
+      }
+
       function renderSell() {
         const container = document.getElementById('view-sell');
         if (!container) return;
@@ -3161,54 +3219,53 @@
 
         let html = [];
 
-        // 1. SEGMENTED POS NAVIGATION TOGGLE
+        // 1. Streamlined POS Register Header Bar with Quick Jump to Sales Log
         html.push([
-          '<div class="pos-segmented-nav">',
-          '  <button type="button" class="pos-segmented-btn ' + (sellViewMode === 'register' ? 'active' : '') + '" id="btn-pos-nav-register">',
-          '    <span>⚡</span> <span>Ring Up Sale</span>',
-          '  </button>',
-          '  <button type="button" class="pos-segmented-btn ' + (sellViewMode === 'receipts' ? 'active' : '') + '" id="btn-pos-nav-receipts">',
-          '    <span>🧾</span> <span>Today\'s Sales & Receipts</span>',
-          '    <span class="badge-tag" style="background:' + (activeSalesCount ? 'var(--brass)' : '#DDD') + '; color:' + (activeSalesCount ? '#FFF' : '#555') + '; font-size:0.72rem; padding:1px 7px; border-radius:10px; font-weight:700;">' + activeSalesCount + '</span>',
+          '<div class="pos-shift-quick-bar" style="display:flex; justify-content:space-between; align-items:center; background:#FAF8F3; border:1px solid #ECE5D8; border-radius:10px; padding:10px 14px; margin-bottom:12px;">',
+          '  <div style="display:flex; align-items:center; gap:8px;">',
+          '    <span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:#1E663B;"></span>',
+          '    <strong style="font-size:0.92rem; color:var(--ink);">POS Register</strong>',
+          '    <span class="mono" style="font-size:0.82rem; color:var(--muted);">• ' + activeSalesCount + ' sales (' + formatMWK(todayRevenue) + ')</span>',
+          '  </div>',
+          '  <button type="button" class="btn btn-outline btn-sm" id="btn-pos-goto-sales-log" style="min-height:30px; padding:0 12px; font-size:0.78rem; font-weight:700; white-space:nowrap;">',
+          '    📋 Sales Log (' + activeSalesCount + ') →',
           '  </button>',
           '</div>'
         ].join(''));
 
-        // MODE 1: RING UP SALE REGISTER
-        if (sellViewMode === 'register') {
-          // Last Sale Action Bar (Instant turnaround with quick edit/void)
-          const recentSale = lastSaleLogged || todaySales.find(function(s) { return !s.voided; });
-          if (recentSale && !recentSale.voided) {
-            html.push([
-              '<div class="pos-last-sale-bar">',
-              '  <div style="display:flex; align-items:center; gap:8px; overflow:hidden; flex-wrap:wrap;">',
-              '    <span style="background:#E6F4EA; color:#137333; font-weight:800; font-size:0.7rem; padding:2px 7px; border-radius:10px; text-transform:uppercase; letter-spacing:0.03em;">✓ Last Sale</span>',
-              '    <span style="font-weight:700; color:var(--ink); font-size:0.84rem;">' + escapeHtml(recentSale.itemName) + '</span>',
-              '    <span class="mono" style="color:var(--muted); font-size:0.8rem;">(' + recentSale.qty + ' ' + escapeHtml(recentSale.unitLabelSnap) + ')</span>',
-              '    <strong class="mono" style="color:var(--brass-dark); font-weight:800; font-size:0.88rem;">' + formatMWK(recentSale.total) + '</strong>',
-              '    <span style="color:var(--muted); font-size:0.74rem;">via ' + escapeHtml(recentSale.payment) + ' at ' + recentSale.time + '</span>',
-              '  </div>',
-              '  <button type="button" class="btn btn-outline btn-sm btn-edit-sale" data-id="' + recentSale.id + '" style="min-height:28px; padding:0 10px; font-size:0.75rem; font-weight:700; white-space:nowrap;">Edit / Void</button>',
-              '</div>'
-            ].join(''));
-          }
+        // Last Sale Action Bar (Instant turnaround with quick edit/void)
+        const recentSale = lastSaleLogged || todaySales.find(function(s) { return !s.voided; });
+        if (recentSale && !recentSale.voided) {
+          html.push([
+            '<div class="pos-last-sale-bar">',
+            '  <div style="display:flex; align-items:center; gap:8px; overflow:hidden; flex-wrap:wrap;">',
+            '    <span style="background:#E6F4EA; color:#137333; font-weight:800; font-size:0.7rem; padding:2px 7px; border-radius:10px; text-transform:uppercase; letter-spacing:0.03em;">✓ Last Sale</span>',
+            '    <span style="font-weight:700; color:var(--ink); font-size:0.84rem;">' + escapeHtml(recentSale.itemName) + '</span>',
+            '    <span class="mono" style="color:var(--muted); font-size:0.8rem;">(' + recentSale.qty + ' ' + escapeHtml(recentSale.unitLabelSnap) + ')</span>',
+            '    <strong class="mono" style="color:var(--brass-dark); font-weight:800; font-size:0.88rem;">' + formatMWK(recentSale.total) + '</strong>',
+            '    <span style="color:var(--muted); font-size:0.74rem;">via ' + escapeHtml(recentSale.payment) + ' at ' + recentSale.time + '</span>',
+            '  </div>',
+            '  <button type="button" class="btn btn-outline btn-sm btn-edit-sale" data-id="' + recentSale.id + '" style="min-height:28px; padding:0 10px; font-size:0.75rem; font-weight:700; white-space:nowrap;">Edit / Void</button>',
+            '</div>'
+          ].join(''));
+        }
 
-        // 2. Main POS Register Area
-        // (selectedItem is in function scope above)
-
-        const payments = ['Cash', 'Visa', 'Airtel Money', 'TNM Mpamba', 'Bank Transfer', 'Other'];
-        const paymentButtons = payments.map(function(p) {
-          const active = p === sellPaymentMethod;
-          return '<button type="button" class="btn btn-sm ' + (active ? 'btn-brass' : 'btn-outline') + ' pay-btn" data-p="' + p + '" style="flex:1 1 29%; min-height:38px; font-size:0.84rem;' + (active ? 'font-weight:700; box-shadow:0 0 0 2px var(--brass-dark);' : 'font-weight:600;') + '">' +
-            (active ? '✓ ' : '') + p +
-          '</button>';
-        }).join('');
-
-        const staffOptions = appState.staffList.map(function(s) {
-          return '<option value="' + escapeHtml(s) + '">';
-        }).join('');
-
-        if (selectedItem) {
+        // Clean deployment empty state check
+        if (appState.inventory.length === 0) {
+          html.push([
+            '<div class="card" style="text-align:center; padding:36px 20px; margin-top:8px;">',
+            '  <div style="font-size:2.4rem; margin-bottom:8px;">🛒</div>',
+            '  <h3 style="font-size:1.15rem; font-weight:700; margin-bottom:6px; color:var(--ink);">Register is Ready</h3>',
+            '  <p style="font-size:0.85rem; color:var(--muted); max-width:380px; margin:0 auto 16px auto;">',
+            '    No drinks in inventory catalog yet. Add your venue stock to start ringing up sales, or load sample starter drinks.',
+            '  </p>',
+            '  <div style="display:flex; justify-content:center; gap:10px; flex-wrap:wrap;">',
+            '    <button type="button" class="btn btn-primary" id="btn-sell-empty-add-item" style="font-weight:700;">+ Add Item to Catalog</button>',
+            '    <button type="button" class="btn btn-outline" id="btn-sell-empty-load-sample">Load Starter Drinks (Demo)</button>',
+            '  </div>',
+            '</div>'
+          ].join(''));
+        } else if (selectedItem) {
           // --- FOCUSED TRANSACTION TICKET WITH ZERO-ERROR SAFEGUARDS ---
           const hasPortions = (selectedItem.conversionRate || 1) > 1;
           let defaultUnitPrice = 0;
@@ -3447,114 +3504,46 @@
           ].join(''));
         }
 
-      } else {
-        // MODE 2: TODAY'S SALES & RECEIPTS (Cleanly separated from register flow)
-        // 1. Shift Metrics Overview
-        html.push([
-          '<div class="pos-shift-bar">',
-          '  <div class="pos-shift-info">',
-          '    <span class="pos-shift-badge">● Open Shift</span>',
-          '    <span class="mono" style="font-weight:700; font-size:0.92rem; color:var(--ink);">' + appState.currentDay.date + '</span>',
-          '  </div>',
-          '  <div class="pos-shift-stats">',
-          '    <div class="pos-stat-item">',
-          '      <span class="pos-stat-label">Transactions</span>',
-          '      <span class="pos-stat-val mono">' + activeSalesCount + '</span>',
-          '    </div>',
-          '    <div class="pos-stat-item">',
-          '      <span class="pos-stat-label">Total Revenue</span>',
-          '      <span class="pos-stat-val mono text-brass">' + formatMWK(todayRevenue) + '</span>',
-          '    </div>',
-          '    <div class="pos-stat-item">',
-          '      <span class="pos-stat-label">Est. Profit</span>',
-          '      <span class="pos-stat-val mono text-good">' + formatMWK(todayProfit) + '</span>',
-          '    </div>',
-          '    <div class="pos-stat-item">',
-          '      <span class="pos-stat-label">Avg. Ticket</span>',
-          '      <span class="pos-stat-val mono">' + formatMWK(avgSale) + '</span>',
-          '    </div>',
-          '    <button type="button" class="btn btn-outline btn-sm" id="btn-sell-goto-recon-summary" style="min-height:30px; padding:0 10px; font-size:0.75rem;">Reconciliation 📊</button>',
-          '  </div>',
-          '</div>'
-        ].join(''));
-
-        // 2. Payment Method Totals Cards
-        const paymentKeys = Object.keys(payBreakdown);
-        if (paymentKeys.length > 0) {
-          html.push([
-            '<div class="card" style="margin-bottom:14px; padding:12px 14px;">',
-            '  <div style="font-size:0.75rem; text-transform:uppercase; color:var(--muted); font-weight:700; margin-bottom:8px; letter-spacing:0.04em;">Payment Methods Breakdown</div>',
-            '  <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(130px, 1fr)); gap:8px;">',
-               paymentKeys.map(function(k) {
-                 return [
-                   '<div style="background:#FAF8F3; border:1px solid #ECE5D8; border-radius:8px; padding:8px 10px;">',
-                   '  <div style="font-size:0.75rem; color:var(--muted); font-weight:600;">' + escapeHtml(k) + ' (' + (payCounts[k] || 0) + ')</div>',
-                   '  <div class="mono" style="font-size:0.95rem; font-weight:800; color:var(--ink); margin-top:2px;">' + formatMWK(payBreakdown[k]) + '</div>',
-                   '</div>'
-                 ].join('');
-               }).join(''),
-            '  </div>',
-            '</div>'
-          ].join(''));
-        }
-
-        // 3. Chronological Transactions Receipts
-        html.push([
-          '<div class="card">',
-          '  <div class="flex-between" style="margin-bottom:10px;">',
-          '    <div>',
-          '      <h3 style="font-size:1.05rem; font-weight:700;">Today\'s Receipts (' + todaySales.length + ')</h3>',
-          '      <span style="font-size:0.75rem; color:var(--muted);">Chronological order on ' + appState.currentDay.date + '</span>',
-          '    </div>',
-          '  </div>'
-        ].join(''));
-
-        if (todaySales.length === 0) {
-          html.push('<p style="color:var(--muted); font-size:0.85rem; padding:16px 0; text-align:center;">No sales logged yet for today. Use Ring Up Sale to begin.</p>');
-        } else {
-          html.push('<div style="overflow-x:auto;"><table class="dense-table">');
-          html.push('<thead><tr><th>Time</th><th>Drink / Item</th><th>Qty</th><th>Total</th><th>Server</th><th>Method</th><th></th></tr></thead><tbody>');
-          todaySales.forEach(function(s) {
-            const isVoid = s.voided;
-            html.push([
-              '<tr style="' + (isVoid ? 'opacity:0.45; text-decoration:line-through;' : '') + '">',
-              '  <td class="mono">' + s.time + '</td>',
-              '  <td><strong>' + escapeHtml(s.itemName) + '</strong>' + (isVoid ? ' <span class="badge-tag badge-stale">VOID</span>' : '') + '</td>',
-              '  <td class="mono">' + s.qty + ' ' + escapeHtml(s.unitLabelSnap) + '</td>',
-              '  <td class="mono"><strong>' + formatMWK(s.total) + '</strong></td>',
-              '  <td>' + escapeHtml(s.staff) + '</td>',
-              '  <td><span class="badge-tag" style="background:#EFEAE0; font-size:0.72rem;">' + escapeHtml(s.payment) + '</span></td>',
-              '  <td class="text-right">',
-              (!isVoid ? '<button class="btn btn-outline btn-sm btn-edit-sale" data-id="' + s.id + '" style="min-height:30px; padding:0 8px; font-size:0.75rem;">Edit / Void</button>' : ''),
-              '  </td>',
-              '</tr>'
-            ].join(''));
-          });
-          html.push('</tbody></table></div>');
-        }
-        html.push('</div>'); // end card
-      }
-
         container.innerHTML = html.join('');
 
-        // -------------------------------------------------------------
-        // Event Listeners for Sell Tab
-        // -------------------------------------------------------------
-        // POS Segmented Navigation
-        const navRegisterBtn = document.getElementById('btn-pos-nav-register');
-        if (navRegisterBtn) {
-          navRegisterBtn.addEventListener('click', function() {
-            sellViewMode = 'register';
-            renderSell();
+      // -------------------------------------------------------------
+      // Event Listeners for Sell Tab
+      // -------------------------------------------------------------
+      // Direct jump to Sales Log (avoids nested navigation loops)
+      const gotoSalesLogBtn = document.getElementById('btn-pos-goto-sales-log');
+      if (gotoSalesLogBtn) {
+        gotoSalesLogBtn.addEventListener('click', function() {
+          switchTab('sales-log');
+        });
+      }
+
+      // Empty state action buttons
+      const emptyAddBtn = document.getElementById('btn-sell-empty-add-item');
+      if (emptyAddBtn) {
+        emptyAddBtn.addEventListener('click', function() {
+          switchTab('inventory');
+          openItemEditor(null);
+        });
+      }
+
+      const emptyDemoBtn = document.getElementById('btn-sell-empty-load-sample');
+      if (emptyDemoBtn) {
+        emptyDemoBtn.addEventListener('click', function() {
+          askConfirm({
+            title: 'Load Starter Sample Drinks?',
+            message: 'This will load starter beers, spirits, and soft drinks to try out the POS register.',
+            okText: 'Load Sample Drinks',
+            tone: 'neutral'
+          }).then(function(confirmed) {
+            if (confirmed) {
+              appState = getSampleDemoData();
+              schedulePersist();
+              renderSell();
+              showToast('Sample drinks loaded!');
+            }
           });
-        }
-        const navReceiptsBtn = document.getElementById('btn-pos-nav-receipts');
-        if (navReceiptsBtn) {
-          navReceiptsBtn.addEventListener('click', function() {
-            sellViewMode = 'receipts';
-            renderSell();
-          });
-        }
+        });
+      }
 
         // Product Search
         const searchInput = document.getElementById('sell-product-search');
@@ -4060,8 +4049,11 @@
         if (!payPills) payPills = '<span style="color:var(--muted); font-size:0.75rem;">No payments</span>';
 
         let html = [
-          '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">',
-          '  <h2 style="font-size:1.15rem; font-weight:700;">Sales Log & Analytics</h2>',
+          '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:8px; flex-wrap:wrap;">',
+          '  <div style="display:flex; align-items:center; gap:8px;">',
+          '    <button class="btn btn-outline btn-sm" id="btn-log-back-to-sell" style="font-weight:700;">⚡ POS Register</button>',
+          '    <h2 style="font-size:1.15rem; font-weight:700; margin:0;">Sales Log &amp; Receipts</h2>',
+          '  </div>',
           '  <button class="btn btn-outline btn-sm" id="btn-export-sales-csv">Export CSV</button>',
           '</div>',
 
@@ -4154,6 +4146,13 @@
           logSelectedDate = this.value;
           renderSalesLog();
         });
+
+        const backToSellBtn = document.getElementById('btn-log-back-to-sell');
+        if (backToSellBtn) {
+          backToSellBtn.addEventListener('click', function() {
+            switchTab('sell');
+          });
+        }
 
         document.getElementById('btn-date-today').addEventListener('click', function() {
           logSelectedDate = getTodayStr();
@@ -5384,8 +5383,12 @@
           '  </div>',
           '</div>',
           '<div style="border-top:1px solid var(--line); padding-top:14px;">',
-          '  <h3 style="font-size:1rem; font-weight:700; color:var(--danger); margin-bottom:8px;">Danger Zone</h3>',
-          '  <button class="btn btn-outline btn-danger btn-block" id="btn-settings-reset" style="color:var(--danger); border-color:var(--danger);">Reset to Default Sample Data</button>',
+          '  <h3 style="font-size:1rem; font-weight:700; color:var(--danger); margin-bottom:8px;">Deployment &amp; Data Management</h3>',
+          '  <p style="font-size:0.8rem; color:var(--muted); margin-bottom:10px;">Clear all venue test data before go-live, or load starter sample drinks for testing.</p>',
+          '  <div style="display:flex; flex-direction:column; gap:8px;">',
+          '    <button class="btn btn-outline btn-danger btn-block" id="btn-settings-clear-all" style="color:var(--danger); border-color:var(--danger); font-weight:700;">🗑️ Clear All Data (Clean Slate for Deployment)</button>',
+          '    <button class="btn btn-outline btn-block" id="btn-settings-load-demo" style="font-size:0.84rem;">🧪 Load Sample Drinks Menu (Demo Mode)</button>',
+          '  </div>',
           '</div>'
         ].join('');
 
@@ -5411,19 +5414,37 @@
           document.getElementById('btn-settings-export-sales').addEventListener('click', exportSalesCSV);
           document.getElementById('btn-settings-export-closed').addEventListener('click', exportClosedDaysCSV);
 
-          document.getElementById('btn-settings-reset').addEventListener('click', function() {
+          document.getElementById('btn-settings-clear-all').addEventListener('click', function() {
             askConfirm({
-              title: 'Reset All Data?',
-              message: 'This will erase all recorded sales, inventory edits, and shift reconciliation history, returning to default sample items. This cannot be undone!',
-              okText: 'Reset Everything',
+              title: 'Clear All Data for Deployment?',
+              message: 'This will erase all recorded sales, inventory items, stock movements, issuances, and shift reconciliation history. Your venue will be completely reset to a clean slate ready for live operations. This cannot be undone!',
+              okText: 'Clear All Data (Clean Slate)',
               tone: 'danger'
             }).then(function(confirmed) {
               if (confirmed) {
-                appState = getDefaultData();
+                appState = getCleanEmptyData();
                 rawStorageSet(STORAGE_KEY, JSON.stringify(appState)).then(function() {
-                  showToast('Stockroom data reset to defaults');
+                  showToast('All venue data cleared for deployment');
                   closeSheet();
-                  switchTab('inventory');
+                  switchTab('sell');
+                });
+              }
+            });
+          });
+
+          document.getElementById('btn-settings-load-demo').addEventListener('click', function() {
+            askConfirm({
+              title: 'Load Sample Drinks Menu?',
+              message: 'This will load sample beers, spirits, and soft drinks to try out the POS register and stock transfer features.',
+              okText: 'Load Sample Menu',
+              tone: 'neutral'
+            }).then(function(confirmed) {
+              if (confirmed) {
+                appState = getSampleDemoData();
+                rawStorageSet(STORAGE_KEY, JSON.stringify(appState)).then(function() {
+                  showToast('Sample drinks menu loaded');
+                  closeSheet();
+                  switchTab('sell');
                 });
               }
             });
@@ -5547,7 +5568,7 @@
           });
 
           initIdleTimer();
-          switchTab('inventory');
+          switchTab('sell');
           updateHeaderStatus();
 
         } catch (bootErr) {
